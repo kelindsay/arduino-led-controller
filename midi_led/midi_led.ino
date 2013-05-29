@@ -1,8 +1,10 @@
 
-#include <Arduino.h>
-#include <MIDI.h>
+#define ARDUINO_MODE 0
 
-#define ARDUINO_MODE 1
+#if ARDUINO_MODE
+# include <Arduino.h>
+#include <MIDI.h>
+#endif
 
 #if !ARDUINO_MODE
 
@@ -338,17 +340,23 @@ int main(void)
   InitDebugMidiCmds();
 
   OutputSimulator();
+
+  return 0;
 }
 #endif
+
 void HandleStartStop(void)
 {
+#if ARDUINO_MODE
   int i;
   for ( i = 0; i < MAX_LEDS; i++ ) {
     analogWrite(gMapPitchToPin[i], gLed[i].adsrBr);
   }
+#endif
   memset( &gLed, 0, sizeof( gLed ) );
 }
 
+#if ARDUINO_MODE
 void setup( void )
 {
   SetupMappingTable();
@@ -371,5 +379,5 @@ void loop( void )
   delayMicroseconds(1001);
 }
 
-
+#endif
 
