@@ -364,6 +364,7 @@ void setup( void )
   MIDI.setHandleNoteOff( HandleNoteOff      );
   MIDI.setHandleStop   ( HandleStartStop    );
   MIDI.setHandleStart  ( HandleStartStop    );
+  MIDI.setHandleControLChange( HandleControlChange );
 }
 
 void loop( void )
