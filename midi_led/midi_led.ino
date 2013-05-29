@@ -1,5 +1,5 @@
 
-#define ARDUINO_MODE 0
+#define ARDUINO_MODE 1
 
 #if ARDUINO_MODE
 # include <Arduino.h>
@@ -364,7 +364,7 @@ void setup( void )
   MIDI.setHandleNoteOff( HandleNoteOff      );
   MIDI.setHandleStop   ( HandleStartStop    );
   MIDI.setHandleStart  ( HandleStartStop    );
-  MIDI.setHandleControLChange( HandleControlChange );
+  MIDI.setHandleControlChange( HandleControlChange );
 }
 
 void loop( void )

@@ -1,7 +1,9 @@
 arduino-led-controller
 ======================
 
-To compile outside of the Arduino run:
+To compile and run outside the Arduino:
 
-Debug:      gcc midi-led.c -lm -Wall -g -o midi-led
-Optimized:  gcc midi-led.c -O3 -lm -Wall -o midi-led
+Edit midi_led.c and modify ARDUINO_MODE to 1
+
+Debug:      gcc midi_led.c -lm -Wall -g -o midi_led
+Optimized:  gcc midi_led.c -O3 -lm -Wall -o midi_led
