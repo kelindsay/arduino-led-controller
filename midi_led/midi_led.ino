@@ -2,7 +2,7 @@
 #define ARDUINO_MODE 1
 
 #if ARDUINO_MODE
-# include <Arduino.h>
+#include <Arduino.h>
 #include <MIDI.h>
 #endif
 
@@ -360,15 +360,21 @@ void HandleStartStop(void)
 void setup( void )
 {
   SetupMappingTable();
+  MIDI.begin( MIDI_CHANNEL_OMNI );
   MIDI.setHandleNoteOn ( HandleNoteOn       );
   MIDI.setHandleNoteOff( HandleNoteOff      );
   MIDI.setHandleStop   ( HandleStartStop    );
   MIDI.setHandleStart  ( HandleStartStop    );
   MIDI.setHandleControlChange( HandleControlChange );
+  
+  HandleStartStop();
 }
 
 void loop( void )
 {
+  
+  MIDI.read();
+  
   int i;
   for ( i = 0; i < MAX_LEDS; i++ ) {
     if ( !gLed[i].enabled ) {
