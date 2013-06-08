@@ -37,15 +37,14 @@ static unsigned long millis( void )
 }
 #endif
 
+// Definitions
 #define MAX_LEDS 16
 #define MAX_CHANNELS 16
-
 #define MAX_LED_WRITE 255
 
+// Macros
 #define EXP_VALUE(v) ((double)( 5*exp((double)v/15)-1 ))
-
 #define LFO_RATE_VALUE(v) ((double)( 5*exp((double)v/18)-1 ))
-
 #define BR_VALUE(v) (((v+1)*2)-2)
 
 enum MidiFunction {
@@ -114,11 +113,9 @@ struct Channel {
 
 static struct LED gLed[MAX_LEDS];
 static struct Channel gChannel[MAX_CHANNELS];
-
 static bool gWantExit = false;
-
-// Value of 0 means that the PITCH isn't mapped to a PIN
-byte gMapPitchToPin[MAX_LEDS];
+byte gMapPitchToPin[MAX_LEDS]; // Value of 0 means that the PITCH isn't mapped to a PIN
+static byte gLastBrightness[MAX_LEDS];
 
 void SetupMappingTable(void)
 {
@@ -351,9 +348,7 @@ static void ProcessADSR( struct LED *led )
     break;
   case EnvStateADSRSustain:
     PRINT("\nSustain State\n" );
-#if !ARDUINO_MODE
     PRINT("T: %lu ms\n", millis() - led->noteOnTimer );
-#endif
     HandleNoteOff( 0, 0, 0 );
     break;
   case EnvStateADSRRelease:
@@ -383,7 +378,8 @@ static void ProcessLFO( struct LED *led )
     if ( brRange == 0 ) {
         led->lfoBr = 0;
         //PRINT( "LFO: %d  ADSR: %d   BR Range: %.0f\n", led->lfoBr, led->adsrBr, brRange );
-        goto EXIT;
+        led->brightness = 0;
+        return;
     }
     int mod = msElapsed / led->lfo->rate;
     double lfoElapsed = msElapsed - ( mod * led->lfo->rate );
@@ -405,8 +401,7 @@ static void ProcessLFO( struct LED *led )
     }
     //PRINT( "LFO Elapsed: %d %f %f\n", mod, led->lfo->rate, lfoElapsed );
     //PRINT( "%f: LFO: %d  ADSR: %d   BR Range: %.0f\n", lfoElapsed, led->lfoBr, led->adsrBr, brRange );
-
-EXIT:
+    
     led->brightness = led->lfoBr;
 }
 
@@ -507,13 +502,18 @@ void loop( void )
   MIDI.read();
 
   int i;
+
   for ( i = 0; i < MAX_LEDS; i++ ) {
     if ( !gLed[i].enabled ) {
       continue;
     }
     ProcessADSR( &gLed[i] );
     ProcessLFO( &gLed[i] );
-    analogWrite( gMapPitchToPin[i],  gLed[i].brightness );
+    // Only change the brightness if it has changed
+    if ( gLastBrightness[i] != gLed[i].brightness ) {
+        analogWrite( gMapPitchToPin[i],  gLed[i].brightness );
+    }
+    gLastBrightness[i] = gLed[i].brightness;
   }
   delayMicroseconds(1001);
 }
