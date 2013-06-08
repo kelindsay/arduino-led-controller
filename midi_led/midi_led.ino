@@ -1,12 +1,16 @@
 
 #define ARDUINO_MODE 1
+#define PRINT_WAVEFORM 0
 
 #if ARDUINO_MODE
 #include <Arduino.h>
 #include <MIDI.h>
+#define PRINT(...) (0);
 #endif
 
 #if !ARDUINO_MODE
+
+#define PRINT(...) (printf(__VA_ARGS__));
 
 #include <stdio.h>
 #include <stdint.h>
@@ -40,6 +44,8 @@ static unsigned long millis( void )
 
 #define EXP_VALUE(v) ((double)( 5*exp((double)v/15)-1 ))
 
+#define LFO_RATE_VALUE(v) ((double)( 5*exp((double)v/18)-1 ))
+
 #define BR_VALUE(v) (((v+1)*2)-2)
 
 enum MidiFunction {
@@ -50,6 +56,8 @@ enum MidiFunction {
   FuncADSRJitterRate = 4,
   FuncADSRJitterIntensity = 5,
   FuncADSRBrightnessFloor = 6,
+  FuncLFORate = 7,
+  FuncLFOShape = 8,
 };
 
 enum EnvelopeState {
@@ -60,15 +68,21 @@ enum EnvelopeState {
   EnvStateADSRDone
 };
 
+enum LFOShape {
+    LFOShapeTriangle
+};
+
 struct LFO
 {
-  byte rate;
-  byte shape;
+    bool enabled;
+    double rate;
+    byte shape;
 };
 
 struct ADSREnvelope
 {
-  byte brightnessFloor;
+  bool enabled;
+  byte brFloor;
   double attackMs;
   double decayMs;
   byte sustainBr; // Brightness
@@ -82,12 +96,13 @@ struct LED
   bool enabled;
   unsigned long noteOnTimer;
   unsigned long noteOffTimer;
-  byte brightnessRoof;
+  byte brRoof;
   byte brightness;
   struct ADSREnvelope *adsr;
+  enum EnvelopeState adsrState;
   int adsrBr;
   struct LFO *lfo;
-  enum EnvelopeState adsrState;
+  int lfoBr;
   int nextActionMs;
 };
 
@@ -127,15 +142,30 @@ void SetupMappingTable(void)
   gMapPitchToPin[ 15 ]	= 51;	// 
 }
 
+void HandleStartStop(void)
+{
+  int i;
+#if ARDUINO_MODE
+  for ( i = 0; i < MAX_LEDS; i++ ) {
+    analogWrite(gMapPitchToPin[i], gLed[i].adsrBr);
+  }
+#endif
+  memset( &gLed, 0, sizeof( gLed ) );
+  for( i = 0; i < MAX_LEDS; i++ ) {
+      gLed[i].adsrBr = MAX_LED_WRITE;
+      gLed[i].brRoof = MAX_LED_WRITE;
+  }
+}
+
 void HandleNoteOn( byte channel, byte pitch, byte velocity )
 {
   // pitch is 0 based.
   if ( (pitch+1) > MAX_LEDS ) {
     return;
   }
-  memset( &gLed[pitch], 0, sizeof( gLed[pitch] ) );
   gLed[pitch].enabled = true;
-  gLed[pitch].brightnessRoof = BR_VALUE(velocity);
+  gLed[pitch].brRoof = BR_VALUE(velocity);
+  PRINT("\nAttack State\n");
   gLed[pitch].adsrState = EnvStateADSRAttack;
   gLed[pitch].adsr = &gChannel[channel].adsr;
   gLed[pitch].lfo = &gChannel[channel].lfo;
@@ -152,7 +182,7 @@ void HandleNoteOff( byte channel, byte pitch, byte velocity )
   gLed[pitch].adsrState = EnvStateADSRRelease;
   gLed[pitch].noteOffTimer = millis();
   gLed[pitch].nextActionMs = 1;
-  printf("\nRelease State\n" );
+  PRINT("\nRelease State\n" );
 }
 
 void HandleControlChange( byte channel, byte number, byte value )
@@ -160,35 +190,45 @@ void HandleControlChange( byte channel, byte number, byte value )
   struct Channel *chPtr;
 
   chPtr = &gChannel[channel];
-  printf("Value: %d - ", value );
+  PRINT("Value: %d - ", value );
   switch( number ) {
   case FuncADSRAttack:
+    chPtr->adsr.enabled = true;
     chPtr->adsr.attackMs = EXP_VALUE(value);
-    printf("Attack: %.0f ms\n", chPtr->adsr.attackMs );
+    PRINT("Attack: %.0f ms\n", chPtr->adsr.attackMs );
     break;
   case FuncADSRDecay:
     chPtr->adsr.decayMs = EXP_VALUE(value);
-    printf("Decay: %.0f ms\n", chPtr->adsr.decayMs );
+    PRINT("Decay: %.0f ms\n", chPtr->adsr.decayMs );
     break;
   case FuncADSRSustain:
     chPtr->adsr.sustainBr = BR_VALUE(value);
-    printf("Sustain: %d br\n", chPtr->adsr.sustainBr );
+    PRINT("Sustain: %d br\n", chPtr->adsr.sustainBr );
     break;
   case FuncADSRRelease:
     chPtr->adsr.releaseMs = EXP_VALUE(value);
-    printf("Release: %.0f ms\n", chPtr->adsr.releaseMs );
+    PRINT("Release: %.0f ms\n", chPtr->adsr.releaseMs );
     break;
   case FuncADSRJitterRate:
     chPtr->adsr.jitterRate = value;
-    printf("Jitter Rate: %d\n", chPtr->adsr.jitterRate );
+    PRINT("Jitter Rate: %d\n", chPtr->adsr.jitterRate );
     break;
   case FuncADSRJitterIntensity:
     chPtr->adsr.jitterIntensity = value;
-    printf("Jitter Intensity: %d\n", chPtr->adsr.jitterIntensity );
+    PRINT("Jitter Intensity: %d\n", chPtr->adsr.jitterIntensity );
     break;
   case FuncADSRBrightnessFloor:
-    chPtr->adsr.brightnessFloor = BR_VALUE(value);
-    printf("Brightness Floor: %d br\n", chPtr->adsr.brightnessFloor );
+    chPtr->adsr.brFloor = BR_VALUE(value);
+    PRINT("Brightness Floor: %d br\n", chPtr->adsr.brFloor );
+    break;
+  case FuncLFORate:
+    chPtr->lfo.enabled = true;
+    chPtr->lfo.rate = LFO_RATE_VALUE(value);
+    PRINT("LFO Rate: %.0f ms\n", chPtr->lfo.rate );
+    break;
+  case FuncLFOShape:
+    chPtr->lfo.shape = value;
+    PRINT("LFO Shape: %d\n", chPtr->lfo.shape );
     break;
   default:
     // error
@@ -199,20 +239,29 @@ static byte ProcessLEDEnvAttack( struct LED *led )
 {
   unsigned long now = millis();
   double msElapsed = (now - led->noteOnTimer)+1;
+  double brRange = ( led->brRoof - led->adsr->brFloor );
 
-  double slice = ( led->adsr->attackMs / led->brightnessRoof );
-  led->adsrBr = ( msElapsed / slice );
-  if ( led->adsrBr > led->brightnessRoof ) {
-    led->adsrBr = led->brightnessRoof;
+#if !ARDUINO_MODE
+  static int once = false;
+  if ( !once ) {
+     once = true;
+     PRINT("T: %lu ms\n", millis() - led->noteOnTimer );
+ }
+#endif
+
+  double slice = ( led->adsr->attackMs / brRange );
+  led->adsrBr = led->adsr->brFloor + ( msElapsed / slice );
+  if ( led->adsrBr > led->brRoof ) {
+      led->adsrBr = led->brRoof;
   }
 
+    //PRINT("ADSR: %d\n", led->adsrBr );
   // Check if we are entering the Decay state
   if ( msElapsed > led->adsr->attackMs ) {
-    printf("\nDecay State: %.0f - %d\n", led->adsr->decayMs, led->adsr->sustainBr );
+    PRINT("\nDecay State: %.0f - %d\n", led->adsr->decayMs, led->adsr->sustainBr );
     led->adsrState = EnvStateADSRDecay;
     led->nextActionMs = 0;
-  } 
-  else {
+  } else {
     led->nextActionMs = slice;
   }
 
@@ -223,20 +272,27 @@ static byte ProcessLEDEnvDecay( struct LED *led )
 {
   unsigned long now = millis();
   double msElapsed = (now - (led->noteOnTimer+led->adsr->attackMs));
-  int brFactors = (led->brightnessRoof - led->adsr->sustainBr);
+  int brFactors = (led->brRoof - led->adsr->sustainBr);
+
+#if !ARDUINO_MODE
+  static int once = false;
+  if ( !once ) {
+     once = true;
+     PRINT("T: %lu ms\n", millis() - led->noteOnTimer );
+ }
+#endif
 
   double slice = ( ( led->adsr->decayMs ) / brFactors );
-  led->adsrBr = led->brightnessRoof - ( msElapsed / slice );
+  led->adsrBr = led->brRoof - ( msElapsed / slice );
   if ( led->adsrBr  < led->adsr->sustainBr ) {
     led->adsrBr = led->adsr->sustainBr;
   }
 
   // Check if we are entering the Decay state
   if ( msElapsed > led->adsr->attackMs+led->adsr->decayMs ) {
-    printf("\nSustain State\n" );
     led->adsrState = EnvStateADSRSustain;
     led->nextActionMs = 0;
-  } 
+  }
   else {
     led->nextActionMs = slice;
   }
@@ -248,20 +304,32 @@ static byte ProcessLEDEnvRelease( struct LED *led )
 {
   unsigned long now = millis();
   double msElapsed = (now - led->noteOffTimer)+1;
+  double brRange = led->adsr->sustainBr - led->adsr->brFloor;
 
-  double slice = ( led->adsr->releaseMs / ( led->adsr->sustainBr - led->adsr->brightnessFloor ) );
+#if !ARDUINO_MODE
+  static int once = false;
+  if ( !once ) {
+     once = true;
+     PRINT("T: %lu ms\n", millis() - led->noteOnTimer );
+ }
+#endif
+
+  double slice = ( led->adsr->releaseMs / brRange );
   led->adsrBr = led->adsr->sustainBr - ( msElapsed / slice );
-  if ( led->adsrBr < led->adsr->brightnessFloor ) {
-    led->adsrBr = led->adsr->brightnessFloor;
+  if ( led->adsrBr < led->adsr->brFloor ) {
+    led->adsrBr = led->adsr->brFloor;
   }
 
+//    PRINT("Release: adsrBr = %d, brFloor = %d\n", led->adsrBr, led->adsr->brFloor );
   // Check if we are entering the Decay state
-  if ( msElapsed > led->adsr->releaseMs ) {
-    printf("\nADSR Done\n");
+  if ( msElapsed > led->adsr->releaseMs ||
+       led->adsrBr < led->adsr->brFloor ) {
+    PRINT("\nADSR Done\n");
+    PRINT("T: %lu ms\n", millis() - led->noteOnTimer );
     gWantExit = true;
     led->adsrState = EnvStateADSRDone;
     led->nextActionMs = 0;
-  } 
+  }
   else {
     led->nextActionMs = slice;
   }
@@ -269,8 +337,11 @@ static byte ProcessLEDEnvRelease( struct LED *led )
   return 0;
 }
 
-static void ProcessLED( struct LED *led )
+static void ProcessADSR( struct LED *led )
 {
+  if ( led->adsr->enabled == false ) {
+      return;
+  }
   switch( led->adsrState ) {
   case EnvStateADSRAttack:
     ProcessLEDEnvAttack( led );
@@ -279,6 +350,10 @@ static void ProcessLED( struct LED *led )
     ProcessLEDEnvDecay( led );
     break;
   case EnvStateADSRSustain:
+    PRINT("\nSustain State\n" );
+#if !ARDUINO_MODE
+    PRINT("T: %lu ms\n", millis() - led->noteOnTimer );
+#endif
     HandleNoteOff( 0, 0, 0 );
     break;
   case EnvStateADSRRelease:
@@ -288,7 +363,51 @@ static void ProcessLED( struct LED *led )
     led->enabled = false;
     break;
   }
-  //printf("ADSR: %d\n", led->adsrBr );
+
+  if ( led->adsrBr < led->adsr->brFloor ) {
+      led->adsrBr = led->adsr->brFloor;
+  }
+  led->brightness = led->adsrBr;
+  //PRINT("ADSR: %d\n", led->adsrBr );
+}
+
+static void ProcessLFO( struct LED *led )
+{
+    if ( led->lfo->enabled == false ) {
+        return;
+    }
+    unsigned long now = millis();
+    double msElapsed = (now - led->noteOnTimer)+1;
+    double brRange = led->adsrBr - led->adsr->brFloor;
+
+    if ( brRange == 0 ) {
+        led->lfoBr = 0;
+        //PRINT( "LFO: %d  ADSR: %d   BR Range: %.0f\n", led->lfoBr, led->adsrBr, brRange );
+        goto EXIT;
+    }
+    int mod = msElapsed / led->lfo->rate;
+    double lfoElapsed = msElapsed - ( mod * led->lfo->rate );
+    double halfRate = led->lfo->rate / 2;
+
+    //PRINT("LFO Elapsed: %.0f  Half Rate: %.0f\n", lfoElapsed, halfRate );
+    if ( lfoElapsed > halfRate ) {
+        led->lfoBr = ( ( halfRate - ( lfoElapsed - halfRate ) ) / ( led->lfo->rate / brRange ) * 2 );
+    } else {
+        led->lfoBr = ( lfoElapsed / ( led->lfo->rate / brRange ) * 2 );
+    }
+
+    led->lfoBr += led->adsr->brFloor;
+
+    if ( led->lfoBr > led->adsrBr ) {
+        led->lfoBr = led->adsrBr;
+    } else if ( led->lfoBr < led->adsr->brFloor ) {
+        led->lfoBr = led->adsr->brFloor;
+    }
+    //PRINT( "LFO Elapsed: %d %f %f\n", mod, led->lfo->rate, lfoElapsed );
+    //PRINT( "%f: LFO: %d  ADSR: %d   BR Range: %.0f\n", lfoElapsed, led->lfoBr, led->adsrBr, brRange );
+
+EXIT:
+    led->brightness = led->lfoBr;
 }
 
 #if !ARDUINO_MODE
@@ -300,7 +419,15 @@ void OutputSimulator(void)
       if ( !gLed[i].enabled ) {
         continue;
       }
-      ProcessLED( &gLed[i] );
+      ProcessADSR( &gLed[i] );
+      ProcessLFO( &gLed[i] );
+# if PRINT_WAVEFORM
+        int j;
+        for ( j = 0; j <  gLed[i].brightness/2; j++ ) {
+            PRINT(" ");
+        }
+        PRINT("*\n");
+# endif
       if ( gWantExit ) {
         break;
       }
@@ -313,14 +440,21 @@ void InitDebugMidiCmds(void)
 {
   int channel = 0;
 
-  HandleNoteOn( channel, 0, 127 );
+  HandleStartStop();
+
+  // ADSR
   HandleControlChange( channel, FuncADSRAttack, 70 );
   HandleControlChange( channel, FuncADSRDecay, 90 );
   HandleControlChange( channel, FuncADSRSustain, 50 );
   HandleControlChange( channel, FuncADSRRelease, 100 );
   HandleControlChange( channel, FuncADSRJitterRate, 0 );
   HandleControlChange( channel, FuncADSRJitterIntensity, 0 );
-  HandleControlChange( channel, FuncADSRBrightnessFloor, 0 );
+  HandleControlChange( channel, FuncADSRBrightnessFloor, 10 );
+
+  // LFO
+  HandleControlChange( channel, FuncLFORate, 50 );
+
+  HandleNoteOn( channel, 0, 127 );
 }
 
 
@@ -330,31 +464,28 @@ int main(void)
 
   gettimeofday( &gStartTv, NULL );
 
+# if 0
+    double msElased = 2500;
+    int mod = msElased / 1000;
+    PRINT("Mod: %d\n", mod );
+    PRINT("Val: %f\n", msElased - ( mod * 1000  ) );
+    return 0;
+# endif
 #if 0
   double value;
   for ( value = 0; value < 127; value++ ) {
-    printf( "%f: %f\n", value, EXP_VALUE(value) );
+      //PRINT( "%f: %f\n", value, EXP_VALUE(value) );
+      PRINT( "%f: %f\n", value, LFO_RATE_VALUE(value) );
   }
+    return 0;
 #endif
 
   InitDebugMidiCmds();
-
   OutputSimulator();
 
   return 0;
 }
 #endif
-
-void HandleStartStop(void)
-{
-#if ARDUINO_MODE
-  int i;
-  for ( i = 0; i < MAX_LEDS; i++ ) {
-    analogWrite(gMapPitchToPin[i], gLed[i].adsrBr);
-  }
-#endif
-  memset( &gLed, 0, sizeof( gLed ) );
-}
 
 #if ARDUINO_MODE
 void setup( void )
@@ -366,22 +497,23 @@ void setup( void )
   MIDI.setHandleStop   ( HandleStartStop    );
   MIDI.setHandleStart  ( HandleStartStop    );
   MIDI.setHandleControlChange( HandleControlChange );
-  
+
   HandleStartStop();
 }
 
 void loop( void )
 {
-  
+
   MIDI.read();
-  
+
   int i;
   for ( i = 0; i < MAX_LEDS; i++ ) {
     if ( !gLed[i].enabled ) {
       continue;
     }
-    ProcessLED( &gLed[i] );
-    analogWrite( gMapPitchToPin[i],  gLed[i].adsrBr );
+    ProcessADSR( &gLed[i] );
+    ProcessLFO( &gLed[i] );
+    analogWrite( gMapPitchToPin[i],  gLed[i].brightness );
   }
   delayMicroseconds(1001);
 }
