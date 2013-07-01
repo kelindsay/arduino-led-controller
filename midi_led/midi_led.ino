@@ -48,15 +48,15 @@ static unsigned long millis( void )
 #define BR_VALUE(v) (((v+1)*2)-2)
 
 enum MidiFunction {
-  FuncADSRAttack  = 0,
-  FuncADSRDecay   = 1,
-  FuncADSRSustain = 2,
-  FuncADSRRelease = 3,
-  FuncADSRJitterRate = 4,
-  FuncADSRJitterIntensity = 5,
-  FuncADSRBrightnessFloor = 6,
-  FuncLFORate = 7,
-  FuncLFOShape = 8,
+  FuncADSRAttack  = 14,
+  FuncADSRDecay   = 15,
+  FuncADSRSustain = 16,
+  FuncADSRRelease = 17,
+  FuncADSRJitterRate = 18,
+  FuncADSRJitterIntensity = 19,
+  FuncADSRBrightnessFloor = 20,
+  FuncLFORate = 21,
+  FuncLFOShape = 22,
 };
 
 enum EnvelopeState {
@@ -123,8 +123,8 @@ void SetupMappingTable(void)
   memset( &gMapPitchToPin, 0, sizeof( gMapPitchToPin ) );
 
   //              Pitch     Pin
-  gMapPitchToPin[  0 ]	= 41;	//
-  gMapPitchToPin[  1 ]	= 43;	//
+  gMapPitchToPin[  0 ]	= 12;	//
+  gMapPitchToPin[  1 ]	= 11;	//
   gMapPitchToPin[  2 ]	= 44;	//
   gMapPitchToPin[  3 ]	= 42;	//
   gMapPitchToPin[  5 ]	= 38;	//
@@ -139,12 +139,24 @@ void SetupMappingTable(void)
   gMapPitchToPin[ 15 ]	= 51;	// 
 }
 
+static void blinkLed( int count, int delayMs )
+{
+  int i;
+  for ( i = 0; i < count; i++ ) {
+   analogWrite( 12, 255 );
+   delay(delayMs);
+   analogWrite( 12, 0 );
+   delay(delayMs);
+  }
+}
+
 void HandleStartStop(void)
 {
   int i;
+  
 #if ARDUINO_MODE
   for ( i = 0; i < MAX_LEDS; i++ ) {
-    analogWrite(gMapPitchToPin[i], gLed[i].adsrBr);
+    analogWrite(gMapPitchToPin[i], 0 );
   }
 #endif
   memset( &gLed, 0, sizeof( gLed ) );
@@ -171,20 +183,29 @@ void HandleNoteOn( byte channel, byte pitch, byte velocity )
 
 void HandleNoteOff( byte channel, byte pitch, byte velocity )
 {
+  //blinkLed(1, 200 );
   // pitch is 0 based.
   if ( (pitch+1) > MAX_LEDS ) {
     return;
   }
 
-  gLed[pitch].adsrState = EnvStateADSRRelease;
-  gLed[pitch].noteOffTimer = millis();
-  gLed[pitch].nextActionMs = 1;
+  if ( gLed[pitch].adsr and gLed[pitch].adsr->enabled ) {
+    gLed[pitch].adsrState = EnvStateADSRRelease;
+    gLed[pitch].noteOffTimer = millis();
+    gLed[pitch].nextActionMs = 1;
+  } else {
+    gLed[pitch].enabled = 0;
+  }
   PRINT("\nRelease State\n" );
 }
 
 void HandleControlChange( byte channel, byte number, byte value )
 {
   struct Channel *chPtr;
+
+  //  if ( number == 21 ) { // number >= 14 && number <= 18 ) { //number > 0 && number < 60 ) {
+  //      blinkLed( 1, 200 );
+  //  }
 
   chPtr = &gChannel[channel];
   PRINT("Value: %d - ", value );
@@ -356,6 +377,7 @@ static void ProcessADSR( struct LED *led )
     break;
   case EnvStateADSRDone:
     led->enabled = false;
+    HandleNoteOn( 0, 0, 127 );
     break;
   }
 
@@ -405,6 +427,27 @@ static void ProcessLFO( struct LED *led )
     led->brightness = led->lfoBr;
 }
 
+void InitDebugMidiCmds(void)
+{
+  int channel = 0;
+
+  HandleStartStop();
+
+  // ADSR
+  HandleControlChange( channel, FuncADSRAttack, 70 );
+  HandleControlChange( channel, FuncADSRDecay, 90 );
+  HandleControlChange( channel, FuncADSRSustain, 50 );
+  HandleControlChange( channel, FuncADSRRelease, 100 );
+  HandleControlChange( channel, FuncADSRJitterRate, 0 );
+  HandleControlChange( channel, FuncADSRJitterIntensity, 0 );
+  HandleControlChange( channel, FuncADSRBrightnessFloor, 10 );
+
+  // LFO
+  HandleControlChange( channel, FuncLFORate, 80 );
+
+  HandleNoteOn( channel, 0, 127 );
+}
+
 #if !ARDUINO_MODE
 void OutputSimulator(void)
 {
@@ -429,27 +472,6 @@ void OutputSimulator(void)
       usleep( 1000 );
     }
   }
-}
-
-void InitDebugMidiCmds(void)
-{
-  int channel = 0;
-
-  HandleStartStop();
-
-  // ADSR
-  HandleControlChange( channel, FuncADSRAttack, 70 );
-  HandleControlChange( channel, FuncADSRDecay, 90 );
-  HandleControlChange( channel, FuncADSRSustain, 50 );
-  HandleControlChange( channel, FuncADSRRelease, 100 );
-  HandleControlChange( channel, FuncADSRJitterRate, 0 );
-  HandleControlChange( channel, FuncADSRJitterIntensity, 0 );
-  HandleControlChange( channel, FuncADSRBrightnessFloor, 10 );
-
-  // LFO
-  HandleControlChange( channel, FuncLFORate, 50 );
-
-  HandleNoteOn( channel, 0, 127 );
 }
 
 
@@ -485,23 +507,44 @@ int main(void)
 #if ARDUINO_MODE
 void setup( void )
 {
+  memset( &gChannel, 0, sizeof( gChannel ) );
+  memset( &gLed, 0, sizeof( gLed ) );
   SetupMappingTable();
+
   MIDI.begin( MIDI_CHANNEL_OMNI );
   MIDI.setHandleNoteOn ( HandleNoteOn       );
   MIDI.setHandleNoteOff( HandleNoteOff      );
   MIDI.setHandleStop   ( HandleStartStop    );
   MIDI.setHandleStart  ( HandleStartStop    );
   MIDI.setHandleControlChange( HandleControlChange );
-
+  //InitDebugMidiCmds();
+  
   HandleStartStop();
 }
 
 void loop( void )
 {
+  
+  int i;
+#if 0
+
+for ( i = 0; i < 255; i++ ) {
+analogWrite( 12, i );   
+delay( 5 );
+}
+return;
+#endif
+#if 0
+if ( gLed[0].enabled ) {
+    blinkLed( 10, 100 );
+} else {
+  analogWrite( gMapPitchToPin[0], 0 );
+}
+return;
+#endif  
+  //int i;
 
   MIDI.read();
-
-  int i;
 
   for ( i = 0; i < MAX_LEDS; i++ ) {
     if ( !gLed[i].enabled ) {
